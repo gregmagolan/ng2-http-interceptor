@@ -3,6 +3,7 @@ import { HttpInterceptorService } from './http-interceptor.service';
 import { XHRBackend, HttpModule, Http, Response, ResponseOptions } from '@angular/http';
 import { MockBackend } from '@angular/http/testing';
 import { HTTP_INTERCEPTOR_PROVIDER } from './providers';
+import { Observable } from 'rxjs';
 
 describe('High-level API', () => {
   let httpInterceptor: HttpInterceptorService;
@@ -15,7 +16,7 @@ describe('High-level API', () => {
       imports: [HttpModule],
       providers: [
         {provide: XHRBackend, useClass: MockBackend},
-        HTTP_INTERCEPTOR_PROVIDER
+        ...HTTP_INTERCEPTOR_PROVIDER
       ]
     });
     interceptor.calls.reset();
@@ -77,22 +78,34 @@ describe('High-level API', () => {
 
     it('should intercept response', () => {
       const callback = jasmine.createSpy('callback');
-      mockBackend.connections.subscribe(conn => conn.mockRespond(responseBody('mocked')));
+      const connCallback = jasmine.createSpy('connCallback').and
+        .callFake(conn => conn.mockRespond(responseBody('mocked')));
+
+      mockBackend.connections.subscribe(connCallback);
+
+      interceptor.and.callFake(o => {
+        o.subscribe(() => null);
+        return o.map(() => 'changed');
+      });
 
       http.get('/url').subscribe(callback);
 
       expect(interceptor).toHaveBeenCalled();
       expect(callback).toHaveBeenCalledWith('changed');
+      expect(connCallback).toHaveBeenCalledTimes(1);
     });
 
     it('should intercept response on HTTP error', () => {
+      interceptor.and.callFake(() => Observable.of('fixed error'));
+      const errorCallback = jasmine.createSpy('errorCallback').and.returnValue(Observable.empty());
       const callback = jasmine.createSpy('callback');
-      mockBackend.connections.subscribe(conn => conn.mockRespond(responseBody('mocked', 404)));
+      mockBackend.connections.subscribe(conn => conn.mockError(Error('error')));
 
-      http.get('/url').subscribe(callback);
+      http.get('/url').catch(errorCallback).subscribe(callback);
 
       expect(interceptor).toHaveBeenCalled();
-      expect(callback).toHaveBeenCalledWith('changed');
+      expect(errorCallback).not.toHaveBeenCalled();
+      expect(callback).toHaveBeenCalledWith('fixed error');
     });
   });
 
@@ -104,15 +117,19 @@ describe('High-level API', () => {
       const callback = jasmine.createSpy('callback').and
         .callFake(r => expect(r.text()).toBe('mocked')); // Make sure response arrived
 
-      mockBackend.connections.subscribe(conn => {
-        expect(conn.request.url).toBe(url); // Make sure request valid
-        conn.mockRespond(responseBody('mocked')); // Mock response
-      });
+      const connCallback = jasmine.createSpy('connCallback').and
+        .callFake(conn => {
+          expect(conn.request.url).toBe(url); // Make sure request valid
+          conn.mockRespond(responseBody('mocked')); // Mock response
+        });
+
+      mockBackend.connections.subscribe(connCallback);
 
       http[method](url, data).subscribe(callback); // Request
 
       expect(interceptor).toHaveBeenCalledWith([url, data], method); // Interceptor called?
       expect(callback).toHaveBeenCalled(); // Response callback called?
+      expect(connCallback).toHaveBeenCalledTimes(1); // Only one request?
     }));
   }
 

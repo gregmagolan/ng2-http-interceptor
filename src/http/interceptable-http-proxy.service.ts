@@ -1,7 +1,7 @@
 import { Injectable } from '@angular/core';
-import { Http, XHRBackend, RequestOptions } from '@angular/http';
+import { Http, XHRBackend, RequestOptions, Response } from '@angular/http';
 import { HttpInterceptorService } from './http-interceptor.service';
-import { Observable } from 'rxjs';
+import { Observable, BehaviorSubject } from 'rxjs';
 import { identityFactory } from './util';
 import { isObject } from 'util';
 
@@ -33,9 +33,19 @@ export class InterceptableHttpProxyService implements ProxyHandler<any> {
       return Observable.empty();
     }
 
-    const response = this.http[method].apply(this.http, args);
+    const response = this.http[method].apply(this.http, args)
+      .multicast(new BehaviorSubject<Response>(null))
+      .refCount()
+      .filter(r => r !== null);
 
-    return this.httpInterceptorService._interceptResponse(InterceptableHttpProxyService._extractUrl(args), method, response);
+    return response
+      .flatMap(this._responseCall(args, method, response))
+      .catch(this._responseCall(args, method, response));
+  }
+
+  private _responseCall(args, method, response) {
+    return () => this.httpInterceptorService._interceptResponse(
+      InterceptableHttpProxyService._extractUrl(args), method, response);
   }
 }
 
